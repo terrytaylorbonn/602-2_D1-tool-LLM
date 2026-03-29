@@ -1,9 +1,9 @@
 {
-  "version": "D4b-2",
+  "version": "D4c-1",
   "created_at": "2026-03-19T13:26:46.629009+00:00",
-  "updated_at": "2026-03-19T13:26:54.547536+00:00",
-  "run_count": 1,
-  "last_user_input": "Compare the distances from Taipeei to Kaaaohsiung and Parrris to Londddon.",
+  "updated_at": "2026-03-27T04:08:45.460671+00:00",
+  "run_count": 5,
+  "last_user_input": "What was the last route result?",
   "last_valid_plan": {
     "steps": [
       {
@@ -12,14 +12,6 @@
         "args": {
           "city_a": "Taipei",
           "city_b": "Kaohsiung"
-        }
-      },
-      {
-        "step_id": "s2",
-        "tool": "get_distance",
-        "args": {
-          "city_a": "Paris",
-          "city_b": "London"
         }
       }
     ]
@@ -33,23 +25,12 @@
         "city_b": "Kaohsiung"
       },
       "result": 350
-    },
-    {
-      "step_id": "s2",
-      "tool": "get_distance",
-      "args": {
-        "city_a": "Paris",
-        "city_b": "London"
-      },
-      "result": 450
     }
   ],
   "memory": {
     "last_cities_mentioned": [
       "Taipei",
-      "Kaohsiung",
-      "Paris",
-      "London"
+      "Kaohsiung"
     ],
     "notes": []
   },
@@ -153,6 +134,314 @@
             "city_b": "London"
           },
           "result": 450
+        }
+      ]
+    },
+    {
+      "run_id": "run_2",
+      "timestamp_utc": "2026-03-20T04:23:33.517707+00:00",
+      "user_input": "Compare the distances from Taipeei to Kaaaohsiung and Parrris to Londddon.",
+      "planning_attempts": [
+        {
+          "attempt": 1,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"from\": \"Taipei\",\n        \"to\": \"Kaohsiung\"\n      }\n    },\n    {\n      \"step_id\": \"s2\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"from\": \"Paris\",\n        \"to\": \"London\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "from": "Taipei",
+                  "to": "Kaohsiung"
+                }
+              },
+              {
+                "step_id": "s2",
+                "tool": "get_distance",
+                "args": {
+                  "from": "Paris",
+                  "to": "London"
+                }
+              }
+            ]
+          },
+          "errors": [
+            "steps[0].args missing required arg 'city_a' for tool 'get_distance'.",
+            "steps[0].args missing required arg 'city_b' for tool 'get_distance'.",
+            "steps[1].args missing required arg 'city_a' for tool 'get_distance'.",
+            "steps[1].args missing required arg 'city_b' for tool 'get_distance'."
+          ]
+        },
+        {
+          "attempt": 2,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Taipei\",\n        \"city_b\": \"Kaohsiung\"\n      }\n    },\n    {\n      \"step_id\": \"s2\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Paris\",\n        \"city_b\": \"London\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Taipei",
+                  "city_b": "Kaohsiung"
+                }
+              },
+              {
+                "step_id": "s2",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Paris",
+                  "city_b": "London"
+                }
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "accepted_plan": {
+        "steps": [
+          {
+            "step_id": "s1",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Taipei",
+              "city_b": "Kaohsiung"
+            }
+          },
+          {
+            "step_id": "s2",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Paris",
+              "city_b": "London"
+            }
+          }
+        ]
+      },
+      "execution_results": [
+        {
+          "step_id": "s1",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Taipei",
+            "city_b": "Kaohsiung"
+          },
+          "result": 350
+        },
+        {
+          "step_id": "s2",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Paris",
+            "city_b": "London"
+          },
+          "result": 450
+        }
+      ]
+    },
+    {
+      "run_id": "run_3",
+      "timestamp_utc": "2026-03-27T00:50:36.061185+00:00",
+      "user_input": "Compare the distances from Taipeei to Kaaaohsiung and Parrris to Londddon.",
+      "planning_attempts": [
+        {
+          "attempt": 1,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"from\": \"Taipei\",\n        \"to\": \"Kaohsiung\"\n      }\n    },\n    {\n      \"step_id\": \"s2\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"from\": \"Paris\",\n        \"to\": \"London\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "from": "Taipei",
+                  "to": "Kaohsiung"
+                }
+              },
+              {
+                "step_id": "s2",
+                "tool": "get_distance",
+                "args": {
+                  "from": "Paris",
+                  "to": "London"
+                }
+              }
+            ]
+          },
+          "errors": [
+            "steps[0].args missing required arg 'city_a' for tool 'get_distance'.",
+            "steps[0].args missing required arg 'city_b' for tool 'get_distance'.",
+            "steps[1].args missing required arg 'city_a' for tool 'get_distance'.",
+            "steps[1].args missing required arg 'city_b' for tool 'get_distance'."
+          ]
+        },
+        {
+          "attempt": 2,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Taipei\",\n        \"city_b\": \"Kaohsiung\"\n      }\n    },\n    {\n      \"step_id\": \"s2\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Paris\",\n        \"city_b\": \"London\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Taipei",
+                  "city_b": "Kaohsiung"
+                }
+              },
+              {
+                "step_id": "s2",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Paris",
+                  "city_b": "London"
+                }
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "accepted_plan": {
+        "steps": [
+          {
+            "step_id": "s1",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Taipei",
+              "city_b": "Kaohsiung"
+            }
+          },
+          {
+            "step_id": "s2",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Paris",
+              "city_b": "London"
+            }
+          }
+        ]
+      },
+      "execution_results": [
+        {
+          "step_id": "s1",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Taipei",
+            "city_b": "Kaohsiung"
+          },
+          "result": 350
+        },
+        {
+          "step_id": "s2",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Paris",
+            "city_b": "London"
+          },
+          "result": 450
+        }
+      ]
+    },
+    {
+      "run_id": "run_4",
+      "timestamp_utc": "2026-03-27T00:51:01.679398+00:00",
+      "user_input": "Use the same cities as last time, but compare only the first route.",
+      "planning_attempts": [
+        {
+          "attempt": 1,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Taipei\",\n        \"city_b\": \"Kaohsiung\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Taipei",
+                  "city_b": "Kaohsiung"
+                }
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "accepted_plan": {
+        "steps": [
+          {
+            "step_id": "s1",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Taipei",
+              "city_b": "Kaohsiung"
+            }
+          }
+        ]
+      },
+      "execution_results": [
+        {
+          "step_id": "s1",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Taipei",
+            "city_b": "Kaohsiung"
+          },
+          "result": 350
+        }
+      ]
+    },
+    {
+      "run_id": "run_5",
+      "timestamp_utc": "2026-03-27T04:08:45.460654+00:00",
+      "user_input": "What was the last route result?",
+      "planning_attempts": [
+        {
+          "attempt": 1,
+          "raw_text": "{\n  \"steps\": []\n}",
+          "plan": {
+            "steps": []
+          },
+          "errors": [
+            "'steps' must not be empty."
+          ]
+        },
+        {
+          "attempt": 2,
+          "raw_text": "{\n  \"steps\": [\n    {\n      \"step_id\": \"s1\",\n      \"tool\": \"get_distance\",\n      \"args\": {\n        \"city_a\": \"Taipei\",\n        \"city_b\": \"Kaohsiung\"\n      }\n    }\n  ]\n}",
+          "plan": {
+            "steps": [
+              {
+                "step_id": "s1",
+                "tool": "get_distance",
+                "args": {
+                  "city_a": "Taipei",
+                  "city_b": "Kaohsiung"
+                }
+              }
+            ]
+          },
+          "errors": []
+        }
+      ],
+      "accepted_plan": {
+        "steps": [
+          {
+            "step_id": "s1",
+            "tool": "get_distance",
+            "args": {
+              "city_a": "Taipei",
+              "city_b": "Kaohsiung"
+            }
+          }
+        ]
+      },
+      "execution_results": [
+        {
+          "step_id": "s1",
+          "tool": "get_distance",
+          "args": {
+            "city_a": "Taipei",
+            "city_b": "Kaohsiung"
+          },
+          "result": 350
         }
       ]
     }

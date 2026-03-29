@@ -1,0 +1,18 @@
+[
+  {
+    "entity": "truck_17",
+    "event_type": "shipment",
+    "location": "taipei",
+    "status": "delayed",
+    "note": "flat tire",
+    "timestamp": "2026-03-27T05:30:09.562679+00:00"
+  },
+  {
+    "entity": "truck_22",
+    "event_type": "shipment",
+    "location": "kaohsiung",
+    "status": "ok",
+    "note": "arrived on time",
+    "timestamp": "2026-03-27T11:40:03.351751+00:00"
+  }
+]
