@@ -849,6 +849,10 @@ if __name__ == "__main__":
 #     cmd_plan(prompt)
 #     return {"status": "ok"}
 
+# def run_plan(prompt: str):
+#     result = cmd_plan(prompt)
+#     return result
+
+# --- API FIX 02: simple wrapper ---
 def run_plan(prompt: str):
-    result = cmd_plan(prompt)
-    return result
+    return cmd_plan(prompt)
