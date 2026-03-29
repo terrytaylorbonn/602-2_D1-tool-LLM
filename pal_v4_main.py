@@ -15,10 +15,15 @@ class Request(BaseModel):
 def root():
     return {"status": "ok"}
 
+# @app.post("/run")
+# def run(req: Request):
+#     # replace this with your PAL function
+# #    result = f"PAL received: {req.prompt}"
+#     result = run_plan(req.prompt)
+#     # return {"result (run_plan)": result}
+#     return result
+
+# --- API FIX 03: return PAL JSON directly ---
 @app.post("/run")
 def run(req: Request):
-    # replace this with your PAL function
-#    result = f"PAL received: {req.prompt}"
-    result = run_plan(req.prompt)
-    # return {"result (run_plan)": result}
-    return result
+    return run_plan(req.prompt)

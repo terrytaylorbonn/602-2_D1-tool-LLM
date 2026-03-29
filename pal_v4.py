@@ -687,12 +687,12 @@ def cmd_ask(user_query: str) -> None:
         # run_query_filter(filter_obj)
         return run_query_filter(filter_obj)
 
-def cmd_plan(user_request: str) -> None:
+# --- API FIX 01: make cmd_plan always return JSON-safe dict ---
+def cmd_plan(user_request: str) -> Dict[str, Any]:
     events = load_events()
     if not events:
         print("PLAN FAILED")
         print("No events stored yet.")
-        # return
         return no_events_error()
 
     print("=== NATURAL LANGUAGE ANALYSIS REQUEST ===")
@@ -703,7 +703,7 @@ def cmd_plan(user_request: str) -> None:
     except Exception as e:
         print("PLAN FAILED")
         print(f"Plan generation failed: {e}")
-        return
+        return {"ok": False, "error": f"Plan generation failed: {e}"}
 
     print("\n=== GENERATED PLAN ===")
     print(json.dumps(plan, indent=2, ensure_ascii=False))
@@ -713,7 +713,7 @@ def cmd_plan(user_request: str) -> None:
         print("\nPLAN FAILED")
         for err in errors:
             print(f"- {err}")
-        return
+        return {"ok": False, "error": " ; ".join(errors), "plan": plan}
 
     step_outputs: Dict[str, Dict[str, Any]] = {}
 
@@ -735,15 +735,20 @@ def cmd_plan(user_request: str) -> None:
             print("matched_events:")
             print(json.dumps(matched, indent=2, ensure_ascii=False))
 
-            analysis = request_analysis(
-                matched,
-                context_label=f"plan step {step_id}, filter_mode={filter_mode}, filter={json.dumps(filter_obj, ensure_ascii=False)}"
-            ) if matched else {
-                "summary": "No matching events.",
-                "abnormal_events": [],
-                "problem_entities": [],
-                "problem_locations": []
-            }
+            try:
+                analysis = request_analysis(
+                    matched,
+                    context_label=f"plan step {step_id}, filter_mode={filter_mode}, filter={json.dumps(filter_obj, ensure_ascii=False)}"
+                ) if matched else {
+                    "summary": "No matching events.",
+                    "abnormal_events": [],
+                    "problem_entities": [],
+                    "problem_locations": []
+                }
+            except Exception as e:
+                print("PLAN FAILED")
+                print(f"Analysis failed in {step_id}: {e}")
+                return {"ok": False, "error": f"Analysis failed in {step_id}: {e}", "step_id": step_id}
 
             print("analysis:")
             print(json.dumps(analysis, indent=2, ensure_ascii=False))
@@ -764,15 +769,20 @@ def cmd_plan(user_request: str) -> None:
             label_a = f"{s_a}:{json.dumps(out_a['filter'], ensure_ascii=False)}" if out_a["filter_mode"] == "filter" else f"{s_a}:all"
             label_b = f"{s_b}:{json.dumps(out_b['filter'], ensure_ascii=False)}" if out_b["filter_mode"] == "filter" else f"{s_b}:all"
 
-            comparison = request_compare(
-                user_request=user_request,
-                subset_a_label=label_a,
-                subset_a_events=out_a["events"],
-                subset_a_analysis=out_a["analysis"],
-                subset_b_label=label_b,
-                subset_b_events=out_b["events"],
-                subset_b_analysis=out_b["analysis"],
-            )
+            try:
+                comparison = request_compare(
+                    user_request=user_request,
+                    subset_a_label=label_a,
+                    subset_a_events=out_a["events"],
+                    subset_a_analysis=out_a["analysis"],
+                    subset_b_label=label_b,
+                    subset_b_events=out_b["events"],
+                    subset_b_analysis=out_b["analysis"],
+                )
+            except Exception as e:
+                print("PLAN FAILED")
+                print(f"Compare failed in {step_id}: {e}")
+                return {"ok": False, "error": f"Compare failed in {step_id}: {e}", "step_id": step_id}
 
             print("compare_inputs:")
             print(json.dumps(step["inputs"], indent=2, ensure_ascii=False))
@@ -785,9 +795,6 @@ def cmd_plan(user_request: str) -> None:
                 "comparison": comparison,
             }
 
-    # print("\n=== FINAL STEP OUTPUTS ===")
-    # print(json.dumps(step_outputs, indent=2, ensure_ascii=False))
-    # return step_outputs
     return {"ok": True, "result": step_outputs}
 
 # --------------------------------------------------
