@@ -1,12 +1,20 @@
 # pal_v4_main.py
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
+import os
 
 # import your existing logic
 from pal_v4 import run_plan   # <-- adjust this
 
 app = FastAPI()
+
+# --- API AUTH 01 ---
+API_KEY = os.getenv("PAL_API_KEY")
+
+def check_api_key(x_api_key: str = Header(default="")):
+    if not API_KEY or x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 class Request(BaseModel):
     prompt: str
@@ -15,15 +23,8 @@ class Request(BaseModel):
 def root():
     return {"status": "ok"}
 
-# @app.post("/run")
-# def run(req: Request):
-#     # replace this with your PAL function
-# #    result = f"PAL received: {req.prompt}"
-#     result = run_plan(req.prompt)
-#     # return {"result (run_plan)": result}
-#     return result
-
-# --- API FIX 03: return PAL JSON directly ---
+# --- API FIX 03 + AUTH ---
 @app.post("/run")
-def run(req: Request):
+def run(req: Request, x_api_key: str = Header(default="")):
+    check_api_key(x_api_key)
     return run_plan(req.prompt)
