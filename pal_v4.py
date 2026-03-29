@@ -26,6 +26,23 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 from openai import OpenAI
 
+
+# --- API INGEST 01 ---
+def run_ingest(event: Dict[str, Any]):
+    errors = validate_event(event)
+    if errors:
+        return {"ok": False, "errors": errors}
+
+    event = normalize_event(event)
+
+    events = load_events()
+    events.append(event)
+    save_events(events)
+
+    return {"ok": True, "event": event}
+
+
+
 # --------------------------------------------------
 # 0 ENV / API KEY
 # --------------------------------------------------
