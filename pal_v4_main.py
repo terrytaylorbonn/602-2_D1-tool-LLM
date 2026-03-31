@@ -6,7 +6,10 @@ import os
 
 # import your existing logic
 #from pal_v4 import run_plan   # <-- adjust this
-from pal_v4 import run_plan, run_ingest
+# from pal_v4 import run_plan, run_ingest
+# --- FIX: use Mongo version ---
+from pal_v5_mongo import run_plan, run_ingest
+# --------------------------------
 
 app = FastAPI()
 
