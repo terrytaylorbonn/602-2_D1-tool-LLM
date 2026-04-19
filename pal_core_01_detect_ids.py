@@ -22,7 +22,7 @@ import re
 import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 # --------------------------------------------------
 # 1 FILES / CONSTANTS

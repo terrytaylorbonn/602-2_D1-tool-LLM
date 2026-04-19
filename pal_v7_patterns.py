@@ -21,12 +21,13 @@
 import json
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List
+
+from pymongo import MongoClient
 from openai import OpenAI
-#166
-from collections import defaultdict
 
 #166
 STATUS_SCORES = {
@@ -112,9 +113,6 @@ def load_dotenv(dotenv_path: str = ".env") -> None:
         key = key.strip()
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
-
-# --- MONGO FIX 01 ---
-from pymongo import MongoClient
 
 load_dotenv()
 

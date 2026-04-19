@@ -3,6 +3,8 @@
 import json
 import os
 from pathlib import Path
+from typing import Dict, List, Tuple
+
 from openai import OpenAI
 
 
@@ -34,7 +36,6 @@ client = OpenAI(api_key=api_key)
 
 
 # import json
-from typing import Any, Dict, List, Tuple
 # from openai import OpenAI
 
 # client = OpenAI()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import os
 from typing import List, Dict, Optional
 
@@ -111,5 +110,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timezone
 from openai import OpenAI
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple
 
 # --------------------------------------------------
 # 0 ENV / API KEY

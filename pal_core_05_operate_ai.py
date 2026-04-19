@@ -692,7 +692,7 @@ def cmd_status() -> None:
     }, indent=2, ensure_ascii=False))
 
 def cmd_reset() -> None:
-    state = reset_state()
+    reset_state()
     print("RESET OK")
     print(f"Saved state to: {STATE_FILE.resolve()}")
 
@@ -849,4 +849,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -316,7 +316,7 @@ def interpret_command_with_llm(user_command: str) -> Dict[str, Any]:
 # 3 COMMANDS
 # --------------------------------------------------
 def cmd_demo() -> None:
-    state = reset_state()
+    reset_state()
     print("DEMO OK")
     print(f"Saved state to: {STATE_FILE.resolve()}")
     print("\n=== STATUS ===")
@@ -428,7 +428,7 @@ def main() -> None:
         cmd_status()
 
     elif command == "reset":
-        state = reset_state()
+        reset_state()
         print("RESET OK")
         print(f"Saved state to: {STATE_FILE.resolve()}")
 
