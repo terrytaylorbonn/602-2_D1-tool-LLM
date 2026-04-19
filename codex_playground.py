@@ -9,6 +9,7 @@ def divide(a, b):
 
 def main():
     print("test1: add(2,3) =", add(2,3))
+    print("test1: add(2,3) =", add(2,4))
     print("divide(10,2) =", divide(10,2))
 
 if __name__ == "__main__":
