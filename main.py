@@ -6,4 +6,4 @@ app = FastAPI()
 
 @app.get("/")
 def root():
-    return {"ok": True, "message": "hello from render"}
+    return {"ok": True, "message": "hello from render (tiny change)"}
