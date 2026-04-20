@@ -15,4 +15,4 @@ async def github_webhook(request: Request):
     data = await request.json()
     print("EVENT:", request.headers.get("X-GitHub-Event"))
     print("PAYLOAD_KEYS:", list(data.keys())[:10])
-    return {"ok": True}
+    return {"ok222": True}
