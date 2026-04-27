@@ -1,0 +1,64 @@
+{
+  "workers": [
+    {
+      "worker_id": "worker_1",
+      "skills": [
+        "logistics",
+        "supplier"
+      ],
+      "location": "taipei",
+      "capacity": 2
+    },
+    {
+      "worker_id": "worker_2",
+      "skills": [
+        "logistics"
+      ],
+      "location": "tainan",
+      "capacity": 2
+    },
+    {
+      "worker_id": "worker_3",
+      "skills": [
+        "system",
+        "supplier"
+      ],
+      "location": "site_1",
+      "capacity": 2
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "task_1",
+      "type": "logistics",
+      "priority": 9,
+      "duration": 2,
+      "location": "taipei",
+      "reason": "urgent delayed shipment"
+    },
+    {
+      "task_id": "task_2",
+      "type": "supplier",
+      "priority": 8,
+      "duration": 2,
+      "location": "taipei",
+      "reason": "supplier escalation"
+    },
+    {
+      "task_id": "task_3",
+      "type": "system",
+      "priority": 7,
+      "duration": 2,
+      "location": "site_1",
+      "reason": "api failure"
+    },
+    {
+      "task_id": "task_4",
+      "type": "logistics",
+      "priority": 6,
+      "duration": 2,
+      "location": "tainan",
+      "reason": "secondary route issue"
+    }
+  ]
+}

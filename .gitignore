@@ -5,3 +5,6 @@ __pycache__/
 credentials.json
 credentials_jk.json
 token.json
+pal_email_state07.json
+pal_events07.json 
+*.log
