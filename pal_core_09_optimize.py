@@ -50,7 +50,7 @@ def cmd_reset() -> None:
     data = {
         "workers": [
             {
-                "worker_id": "worker_1",
+                "worker_id": "worker_1b",
                 "skills": ["logistics", "supplier"],
                 "location": "taipei",
                 "capacity": 2,
