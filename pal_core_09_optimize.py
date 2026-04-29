@@ -56,7 +56,7 @@ def cmd_reset() -> None:
                 "capacity": 2,
             },
             {
-                "worker_id": "worker_2",
+                "worker_id": "worker_2bbb(vsc)",
                 "skills": ["logistics"],
                 "location": "tainan",
                 "capacity": 2,
