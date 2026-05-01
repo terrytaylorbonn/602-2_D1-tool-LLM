@@ -200,9 +200,15 @@
       try {
         // New normalization = new conceptual event → do not reuse last save id (avoids POST 409).
         $("f_source_message_id").value = "";
+        // ### Auth: Must use apiHeaders() (not only Content-Type) so POST /normalize-text includes
+        // Authorization: Bearer … when the server has PAL_API_BEARER_TOKEN set. The token comes
+        // from #palApiBearer / localStorage ("pal_api_bearer_token"). Saving the list and Mongo
+        // already used apiHeaders() / authOnlyHeaders(); Normalize was the one path that omitted
+        // Bearer and always got 401 on Render while curl with -H worked — same bug class as
+        // forgetting the header on any protected route.
         const r = await fetch("/normalize-text", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: apiHeaders(),
           body: JSON.stringify({ text }),
         });
         const data = await r.json().catch(() => ({}));
