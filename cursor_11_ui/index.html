@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PAL · HL → normalize · save</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4d;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9fff;
+      --ok: #3ecf8e;
+      --warn: #f5a623;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      line-height: 1.45;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 880px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+    .sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.25rem; }
+    section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1rem 1.1rem;
+      margin-bottom: 1rem;
+    }
+    label { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 0.35rem; }
+    textarea, input, select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.55rem 0.65rem;
+      font-size: 0.92rem;
+      background: var(--bg);
+      color: var(--text);
+    }
+    textarea { min-height: 96px; resize: vertical; font-family: inherit; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem 0.75rem; }
+    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+    button {
+      border: none;
+      border-radius: 8px;
+      padding: 0.55rem 1rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #0a0f16;
+    }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btns { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+    #status {
+      margin-top: 0.65rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #status.err { color: #ff8a8a; }
+    #status.ok { color: var(--ok); }
+    #modepill {
+      display: inline-block;
+      font-size: 0.72rem;
+      padding: 0.2rem 0.45rem;
+      border-radius: 6px;
+      background: rgba(245,166,35,0.15);
+      color: var(--warn);
+      margin-left: 0.35rem;
+      vertical-align: middle;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.45rem 0.35rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 500; }
+    .mono { font-family: ui-monospace, "Cascadia Mono", monospace; }
+    a.api { color: var(--accent); font-size: 0.82rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PAL intake <span style="font-weight:400;color:var(--muted)">(cursor&nbsp;11)</span></h1>
+    <p class="sub">Messy phrase in → normalize (LLM when configured) → edit fields → save to Mongo.<span id="modepill"></span></p>
+
+    <section>
+      <label for="palApiBearer">API bearer token</label>
+      <input type="password" id="palApiBearer" autocomplete="off" spellcheck="false" placeholder="Only if server has PAL_API_BEARER_TOKEN set (stored in browser localStorage)" />
+      <p class="sub" style="margin:0.35rem 0 0;font-size:0.78rem">Matches <span class="mono">Authorization: Bearer …</span> · leave blank for local dev with no token.</p>
+    </section>
+
+    <section>
+      <label for="hl">Human language</label>
+      <textarea id="hl" placeholder="e.g. truck 12 stuck in Taipei traffic, ETA delayed"></textarea>
+      <div class="btns">
+        <button type="button" id="btnNorm">Normalize</button>
+      </div>
+      <div id="status"></div>
+    </section>
+
+    <section>
+      <p class="sub" style="margin:0 0 0.85rem;font-size:0.8rem">Adjust before save (maps to POST <span class="mono">/events</span>).</p>
+      <div class="row">
+        <div><label for="f_entity">entity</label><input id="f_entity" /></div>
+        <div><label for="f_event_type">event_type</label><input id="f_event_type" /></div>
+        <div><label for="f_location">location</label><input id="f_location" /></div>
+        <div><label for="f_status">status</label><input id="f_status" /></div>
+        <div><label for="f_priority">priority (0–10)</label><input id="f_priority" type="number" min="0" max="10" /></div>
+        <div><label for="f_source_message_id">source_message_id</label><input id="f_source_message_id" name="pal_event_ext_id" autocomplete="off" placeholder="leave empty for auto ui_…" /></div>
+        <div style="grid-column:1/-1;"><label for="f_subject">subject</label><input id="f_subject" /></div>
+        <div style="grid-column:1/-1;"><label for="f_sender">sender</label><input id="f_sender" /></div>
+        <div style="grid-column:1/-1;"><label for="f_note">note</label><textarea id="f_note" rows="3"></textarea></div>
+      </div>
+      <div class="btns">
+        <button type="button" id="btnSave">Save to Mongo</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="btns" style="margin-top:0">
+        <button type="button" class="secondary" id="btnList">Refresh event list</button>
+        <a class="api" href="/docs" target="_blank" rel="noopener">OpenAPI /docs</a>
+      </div>
+      <div style="overflow-x:auto;margin-top:0.75rem">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>timestamp</th>
+              <th>entity</th>
+              <th>status</th>
+              <th>source_message_id</th>
+              <th>note</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    const PAL_BEARER_LS = "pal_api_bearer_token";
+
+    function persistBearer() {
+      localStorage.setItem(PAL_BEARER_LS, $("palApiBearer").value.trim());
+    }
+
+    function loadBearer() {
+      $("palApiBearer").value = localStorage.getItem(PAL_BEARER_LS) || "";
+    }
+
+    function authOnlyHeaders() {
+      const h = {};
+      const t = ($("palApiBearer").value || "").trim();
+      if (t) h["Authorization"] = "Bearer " + t;
+      return h;
+    }
+
+    function apiHeaders() {
+      return { ...authOnlyHeaders(), "Content-Type": "application/json" };
+    }
+
+    $("palApiBearer").addEventListener("change", persistBearer);
+    $("palApiBearer").addEventListener("blur", persistBearer);
+    loadBearer();
+
+    function setStatus(msg, cls) {
+      statusEl.className = cls || "";
+      statusEl.textContent = msg || "";
+    }
+
+    async function normalizeText() {
+      const text = $("hl").value.trim();
+      if (!text) {
+        setStatus("Add some human-language text first.", "err");
+        return;
+      }
+      setStatus("Normalizing…");
+      $("btnNorm").disabled = true;
+      $("modepill").textContent = "";
+      try {
+        // New normalization = new conceptual event → do not reuse last save id (avoids POST 409).
+        $("f_source_message_id").value = "";
+        const r = await fetch("/normalize-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          setStatus("Normalize failed: " + (data.detail ? JSON.stringify(data.detail) : r.status), "err");
+          return;
+        }
+        const n = data.normalized || {};
+        $("f_entity").value = n.entity || "";
+        $("f_event_type").value = n.event_type || "";
+        $("f_location").value = n.location || "";
+        $("f_status").value = n.status || "";
+        $("f_priority").value = n.priority != null ? n.priority : 5;
+        $("f_note").value = n.note || text;
+        $("f_subject").value = (n.event_type || "") + " " + (n.entity || "");
+        $("f_sender").value = "ui_user";
+        $("modepill").textContent = data.normalization_mode || "";
+        setStatus(data.used_llm ? "Used LLM." : "Used rule-based fallback.", "ok");
+      } catch (e) {
+        setStatus(String(e), "err");
+      } finally {
+        $("btnNorm").disabled = false;
+      }
+    }
+
+    async function saveEvent() {
+      const payload = {
+        entity: $("f_entity").value.trim(),
+        event_type: $("f_event_type").value.trim(),
+        location: $("f_location").value.trim(),
+        status: $("f_status").value.trim(),
+        priority: parseInt($("f_priority").value, 10) || 0,
+        note: $("f_note").value.trim(),
+        source: "ui_hl_input",
+        subject: $("f_subject").value.trim() || undefined,
+        sender: $("f_sender").value.trim() || undefined,
+      };
+      const smid = $("f_source_message_id").value.trim();
+      if (smid) payload.source_message_id = smid;
+
+      if (!payload.note) {
+        setStatus("note must not be empty.", "err");
+        return;
+      }
+      setStatus("Saving…");
+      $("btnSave").disabled = true;
+      try {
+        const r = await fetch("/events", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify(payload),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          setStatus("Save failed (" + r.status + "): " + (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || data)), "err");
+          return;
+        }
+        const sid = data.event && data.event.source_message_id ? data.event.source_message_id : "(n/a)";
+        setStatus(
+          "Saved. inserted_id=" + data.inserted_id + " · source_message_id=" + sid +
+            " · Use Normalize again for a new row (clears external id field).",
+          "ok",
+        );
+        $("f_source_message_id").value = "";
+        await refreshList();
+      } catch (e) {
+        setStatus(String(e), "err");
+      } finally {
+        $("btnSave").disabled = false;
+      }
+    }
+
+    async function refreshList() {
+      const tb = $("tbl").querySelector("tbody");
+      tb.innerHTML = "";
+      try {
+        const r = await fetch("/events?limit=40&sort=timestamp_desc", { headers: authOnlyHeaders() });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok || !data.events) {
+          tb.innerHTML = "<tr><td colspan='5'>Could not load events (" + r.status + ")</td></tr>";
+          return;
+        }
+        for (const ev of data.events) {
+          const tr = document.createElement("tr");
+          const td = (t) => { const x = document.createElement("td"); x.className = "mono"; x.textContent = t; return x; };
+          const note = (ev.note || "").slice(0, 80) + ((ev.note || "").length > 80 ? "…" : "");
+          tr.appendChild(td(ev.timestamp || ""));
+          tr.appendChild(td(ev.entity || ""));
+          tr.appendChild(td(ev.status || ""));
+          tr.appendChild(td(ev.source_message_id || ""));
+          tr.appendChild(td(note));
+          tb.appendChild(tr);
+        }
+        if (!data.events.length)
+          tb.innerHTML = "<tr><td colspan='5' style='color:var(--muted)'>No events yet.</td></tr>";
+      } catch (e) {
+        tb.innerHTML = "<tr><td colspan='5' class='err'>" + String(e) + "</td></tr>";
+      }
+    }
+
+    $("btnNorm").addEventListener("click", normalizeText);
+    $("btnSave").addEventListener("click", saveEvent);
+    $("btnList").addEventListener("click", refreshList);
+    refreshList();
+  </script>
+</body>
+</html>

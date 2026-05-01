@@ -24,7 +24,9 @@
 #   python cursor_08_fastapi.py show
 #   python cursor_08_fastapi.py loop --interval 60
 #   python cursor_08_fastapi.py serve --port 8080
-#   uvicorn cursor_11_llm_canonical:app --reload --port 8093
+#   uvicorn cursor_11_llm_canonical:app --reload --port 8094
+#   Open http://127.0.0.1:8094/ui for HL → normalize → save (Mongo).
+#   Optional: PAL_API_BEARER_TOKEN=require Authorization: Bearer on /events*, /normalize-text.
 #
 # Example:
 #   Add these values to .env:
@@ -36,20 +38,23 @@
 import argparse
 import email
 import hashlib
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import imaplib
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from datetime import datetime, timezone
 from email.message import Message
 from email.header import decode_header
 # ### 08 fastapi: Import FastAPI to expose REST endpoints over existing event data.
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Annotated, Any, Dict, List, Optional, Tuple
 try:
     # ### 09 mongo: Keep import guarded so the module can still load even if pymongo is missing.
     from pymongo import MongoClient
@@ -102,9 +107,38 @@ MONGO_DB_NAME = "pal_db"
 MONGO_COLLECTION_NAME = "events"
 MONGO_URI = os.getenv("MONGO_URI", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+# ### 11 deploy: If set (e.g. on Render), require Authorization: Bearer <value> on data/LLM routes.
+PAL_API_BEARER_TOKEN = os.getenv("PAL_API_BEARER_TOKEN", "").strip()
+
+
+def verify_api_bearer(authorization: Annotated[Optional[str], Header()] = None) -> None:
+    if not PAL_API_BEARER_TOKEN:
+        return
+    expected = f"Bearer {PAL_API_BEARER_TOKEN}"
+    got = (authorization or "").strip()
+    if got != expected:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header (Bearer token).",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+RequireApiBearer = Depends(verify_api_bearer)
+
 
 # ### 11 canonical: API instance for Mongo read + LLM normalization with canonical schema.
 app = FastAPI(title="Cursor 11 LLM Canonical API", version="0.1.0")
+
+_CURSOR11_UI = Path(__file__).resolve().parent / "cursor_11_ui" / "index.html"
+
+
+@app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+def ui_hl_console() -> HTMLResponse:
+    # ### 11 UI: Same-origin HL → normalize-text → editable fields → POST /events.
+    if not _CURSOR11_UI.is_file():
+        raise HTTPException(status_code=404, detail="cursor_11_ui/index.html missing")
+    return HTMLResponse(_CURSOR11_UI.read_text(encoding="utf-8"))
 
 mongo_client = None
 mongo_db = None
@@ -239,7 +273,7 @@ def normalize_event_for_api(event: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
     out = dict(event)
-    entity = normalize_whitespace(str(out.get("entity", "")))
+    entity = sanitize_entity_field(normalize_whitespace(str(out.get("entity", ""))))
     note = normalize_whitespace(str(out.get("note", "")))
     status = normalize_whitespace(str(out.get("status", "")))
     location = normalize_whitespace(str(out.get("location", "")))
@@ -273,6 +307,19 @@ class NormalizeTextRequest(BaseModel):
     text: str
 
 
+class CreateEventRequest(BaseModel):
+    entity: str
+    event_type: str
+    location: str
+    status: str
+    priority: int
+    note: str
+    source: Optional[str] = None
+    source_message_id: Optional[str] = None
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+
+
 ALLOWED_EVENT_TYPES = {
     "logistics_alert",
     "system_alert",
@@ -289,6 +336,39 @@ ALLOWED_STATUSES = {
     "resolved",
     "alert",
 }
+
+
+def sanitize_entity_field(entity: str) -> str:
+    # ### 11 canonical: Models sometimes emit a nested fragment like `{entity:'truck_tr-12'}`
+    # inside the JSON `entity` value; coerce to the plain slug for Mongo/UI.
+    ent = normalize_whitespace(str(entity)).strip("`")
+    if not ent:
+        return ""
+    if ent.startswith("{") and ent.endswith("}"):
+        try:
+            blob = json.loads(ent)
+            if isinstance(blob, dict):
+                inner = blob.get("entity")
+                if inner is not None and str(inner).strip():
+                    return normalize_whitespace(str(inner).strip())
+        except json.JSONDecodeError:
+            mobj = re.search(
+                r"""(?si)\{\s*['\"]?\s*entity\s*['\"]?\s*:\s*['\"]?([^}'\"]+)['\"]?\s*\}""",
+                ent,
+            )
+            if mobj:
+                ent = mobj.group(1).strip()
+    m_inner = re.search(
+        r"""(?si)\bentity\b\s*[:=]\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s,}'\"]+))""",
+        ent,
+    )
+    if m_inner:
+        ent = next((g for g in m_inner.groups() if g), ent)
+        ent = str(ent).strip()
+    ent = normalize_whitespace(ent.strip("{}"))
+    if len(ent) >= 2 and ent[0] in "'\"" and ent[0] == ent[-1]:
+        ent = ent[1:-1].strip()
+    return normalize_whitespace(ent)
 
 
 def deterministic_normalize_text(text: str) -> Dict[str, Any]:
@@ -314,7 +394,7 @@ def canonicalize_normalized_event(raw_text: str, normalized: Dict[str, Any]) -> 
     text = normalize_whitespace(raw_text)
     out = dict(normalized) if isinstance(normalized, dict) else {}
 
-    entity = normalize_whitespace(str(out.get("entity", "")))
+    entity = sanitize_entity_field(normalize_whitespace(str(out.get("entity", ""))))
     if not entity:
         entity = extract_entity_id(text, text)
     entity = entity.replace(" ", "_").lower() if entity else "unknown_entity"
@@ -376,7 +456,9 @@ def llm_normalize_text(text: str) -> Dict[str, Any]:
 
     # ### 11 canonical: Keep defensive extraction before canonical post-processing.
     out = deterministic_normalize_text(text)
-    out["entity"] = normalize_whitespace(str(parsed.get("entity", out["entity"]))) or out["entity"]
+    out["entity"] = sanitize_entity_field(
+        normalize_whitespace(str(parsed.get("entity", out["entity"])))
+    ) or out["entity"]
     out["event_type"] = normalize_whitespace(str(parsed.get("event_type", out["event_type"]))) or out["event_type"]
     out["location"] = normalize_whitespace(str(parsed.get("location", out["location"]))) or out["location"]
     out["status"] = normalize_whitespace(str(parsed.get("status", out["status"]))) or out["status"]
@@ -389,8 +471,50 @@ def llm_normalize_text(text: str) -> Dict[str, Any]:
     return out
 
 
+def alloc_ui_source_message_id() -> str:
+    # ### 11 canonical: Avoid ui_<ms> collisions (double-click / same-ms POSTs → 409 dup key).
+    return f"ui_{time.time_ns()}_{secrets.token_hex(4)}"
+
+
+def build_event_document_from_request(payload: CreateEventRequest) -> Dict[str, Any]:
+    # ### 11 canonical: Normalize POST payload into canonical event document for Mongo insert.
+    raw_text = normalize_whitespace(payload.note)
+    seed = {
+        "entity": payload.entity,
+        "event_type": payload.event_type,
+        "location": payload.location,
+        "status": payload.status,
+        "priority": payload.priority,
+        "note": raw_text,
+    }
+    canonical = canonicalize_normalized_event(raw_text, seed)
+    now_iso = utc_now_iso()
+    source = normalize_whitespace(payload.source or "") or "ui_hl_input"
+    source_message_id = normalize_whitespace(payload.source_message_id or "") or alloc_ui_source_message_id()
+    subject = normalize_whitespace(payload.subject or "") or f"{canonical['event_type']} {canonical['entity']}".strip()
+    sender = normalize_whitespace(payload.sender or "") or "ui_user"
+
+    return {
+        "source": source,
+        "source_message_id": source_message_id,
+        "timestamp": now_iso,
+        "event_time_raw": now_iso,
+        "entity": canonical["entity"],
+        "event_type": canonical["event_type"],
+        "status": canonical["status"],
+        "priority": canonical["priority"],
+        "location": canonical["location"],
+        "subject": subject,
+        "sender": sender,
+        "note": canonical["note"],
+    }
+
+
 @app.post("/normalize-text")
-def normalize_text(payload: NormalizeTextRequest) -> Dict[str, Any]:
+def normalize_text(
+    payload: NormalizeTextRequest,
+    _auth: Annotated[None, RequireApiBearer],
+) -> Dict[str, Any]:
     # ### 11 canonical: LLM-first endpoint returning canonicalized output and mode label.
     text = normalize_whitespace(payload.text)
     if not text:
@@ -426,8 +550,47 @@ def normalize_text(payload: NormalizeTextRequest) -> Dict[str, Any]:
         }
 
 
+@app.post("/events")
+def create_event(
+    payload: CreateEventRequest,
+    _auth: Annotated[None, RequireApiBearer],
+) -> Dict[str, Any]:
+    # ### 11 canonical: Persist canonicalized event to Mongo for UI save flow.
+    if mongo_events_collection is None:
+        raise HTTPException(status_code=503, detail="Mongo not configured or unavailable")
+
+    if not normalize_whitespace(payload.note):
+        raise HTTPException(status_code=400, detail="note must not be empty")
+
+    event_doc = build_event_document_from_request(payload)
+    try:
+        existing = mongo_events_collection.find_one(
+            {"source_message_id": event_doc["source_message_id"]},
+            {"_id": 0, "source_message_id": 1},
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"source_message_id already exists: {event_doc['source_message_id']}",
+            )
+
+        # PyMongo adds _id (ObjectId) to the inserted dict in place; use a copy so the
+        # JSON response does not include a non-serializable ObjectId.
+        insert_result = mongo_events_collection.insert_one(dict(event_doc))
+        return {
+            "ok": True,
+            "inserted_id": str(insert_result.inserted_id),
+            "event": event_doc,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to insert event: {e}")
+
+
 @app.get("/events")
 def get_events(
+    _auth: Annotated[None, RequireApiBearer],
     source: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None),
     entity: Optional[str] = Query(default=None),
@@ -500,7 +663,10 @@ def get_events(
 
 
 @app.get("/events/{source_message_id}")
-def get_event_by_id(source_message_id: str) -> Dict[str, Any]:
+def get_event_by_id(
+    source_message_id: str,
+    _auth: Annotated[None, RequireApiBearer],
+) -> Dict[str, Any]:
     # ### 08 fastapi: Add point-lookup endpoint for one event by source_message_id.
     events = load_events_for_api()
 
@@ -513,7 +679,9 @@ def get_event_by_id(source_message_id: str) -> Dict[str, Any]:
 
 
 @app.get("/events/summary/status")
-def get_event_status_summary() -> Dict[str, Any]:
+def get_event_status_summary(
+    _auth: Annotated[None, RequireApiBearer],
+) -> Dict[str, Any]:
     # ### 08 fastapi: Add summary endpoint to quickly inspect distribution by status.
     events = load_events_for_api()
 
@@ -560,6 +728,7 @@ def health_check() -> Dict[str, Any]:
         "llm_import_ok": llm_import_ok,
         "llm_configured": llm_configured,
         "llm_ready": llm_ready,
+        "api_bearer_required": bool(PAL_API_BEARER_TOKEN),
     }
 
 
