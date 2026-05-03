@@ -4,3 +4,21 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn pal_v4_main:app --host 0.0.0.0 --port $PORT
+  - type: web
+    name: jobradar
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn jobradar_01_greenhouse_ingest:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: COLLECTION
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: JOB_LIMIT
+        value: "10"
