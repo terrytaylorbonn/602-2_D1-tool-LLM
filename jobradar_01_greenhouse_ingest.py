@@ -1,65 +1,90 @@
-# jobradar_01_greenhouse_ingest.py
+# jobradar_01_greenhouse_ingest.py STEP2
 
 # Step 1 of 6: Fetch jobs from Greenhouse public API → normalize → dedup → insert into MongoDB
-# No LLM, no FastAPI, no email — just the pipeline core
-# Run (same interpreter that pip used — see below):
-#   .venv\\Scripts\\activate   # Git Bash/PowerShell: activate venv first
+# Step 2 of 6: LLM scoring (OpenAI or Anthropic, whichever key is available)
+# Run:
+#   .venv\Scripts\activate
 #   python -m pip install -r requirements.txt
 #   python jobradar_01_greenhouse_ingest.py
-# On Windows, `py -3 …` often points at *another* Python than venv pip → ModuleNotFoundError.
 
 import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient, errors
 from dotenv import load_dotenv
 import os
+import json
 
 # --- CONFIG ---
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
-DB_NAME = os.getenv("DB_NAME", "jobradar")        # default if not in .env
-COLLECTION = os.getenv("COLLECTION", "jobs")       # default if not in .env
+DB_NAME = os.getenv("DB_NAME", "jobradar")
+COLLECTION = os.getenv("COLLECTION", "jobs")
+
+## Step 2 LLM: load API keys — script will use whichever is available
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+## Default 10 jobs/board if JOB_LIMIT unset (safe for dev). Set JOB_LIMIT=0 for no cap (full ingest).
+JOB_LIMIT = max(0, int(os.getenv("JOB_LIMIT", "10")))
 
 if not MONGO_URI:
     raise ValueError("MONGO_URI not found in .env")
 
+## Step 2 LLM: warn if no LLM key found — scoring will be skipped
+if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
+    print("WARNING: No LLM API key found. Jobs will be inserted without scoring.")
 
-
-# Add/remove companies as needed
-# These must match the Greenhouse "board token" (usually company name lowercase)
-# Verify at: https://boards-api.greenhouse.io/v1/boards/{company}/jobs
+# Step 1: removed non-working companies — only anthropic and mongodb confirmed working
 COMPANIES = [
     "anthropic",
-    "palantir",
     "mongodb",
-    "openai",
-    "scale-ai",
-    "huggingface",
 ]
+
+## Step 2 LLM: paste your CV here (or load from file)
+## This is sent to the LLM with every job for scoring
+CV_TEXT = """
+Experienced Python developer. Skills: FastAPI, MongoDB, LLM integration,
+REST APIs, cloud deployment (Render), Docker basics, OpenAI/Anthropic APIs,
+agentic AI pipelines, RAG, MCP, tool calling.
+Background: drones, robotics AI, full-stack development.
+"""
+## Step 2 LLM: optionally load CV from file instead of hardcoding above
+## Uncomment to use:
+# CV_PATH = os.getenv("CV_PATH", "cv.txt")
+# if os.path.exists(CV_PATH):
+#     with open(CV_PATH) as f:
+#         CV_TEXT = f.read()
+
+
+## Step 2 LLM: cost per 1K tokens (approximate, check current pricing)
+## gpt-4o-mini: $0.00015 input, $0.0006 output per 1K tokens
+## claude-haiku: $0.00025 input, $0.00125 output per 1K tokens
+OPENAI_COST_PER_1K_INPUT  = 0.00015
+OPENAI_COST_PER_1K_OUTPUT = 0.0006
+ANTHROPIC_COST_PER_1K_INPUT  = 0.00025
+ANTHROPIC_COST_PER_1K_OUTPUT = 0.00125
+
+## Step 2 LLM: running cost tracker
+cost_tracker = {"total": 0.0, "calls": 0}
+
+
 
 # --- CONNECT ---
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION]
 
-# Unique index on job_id to enforce dedup at DB level
 collection.create_index("job_id", unique=True)
 
 
 # --- NORMALIZE ---
 def normalize_job(job: dict, company: str) -> dict:
-    """
-    Map raw Greenhouse job fields to canonical JobRadar schema.
-    """
-    # Greenhouse location can be a dict or string depending on version
     location_raw = job.get("location", {})
     if isinstance(location_raw, dict):
         location = location_raw.get("name", "Unknown")
     else:
         location = str(location_raw)
 
-    # Stable unique ID: greenhouse numeric job id + company
     job_id = f"gh_{company}_{job.get('id', '')}"
 
     return {
@@ -70,20 +95,139 @@ def normalize_job(job: dict, company: str) -> dict:
         "location": location,
         "remote": "remote" in location.lower(),
         "url": job.get("absolute_url", ""),
-        "posted_date": job.get("updated_at", ""),  # Greenhouse uses updated_at
+        "posted_date": job.get("updated_at", ""),
         "seen_date": datetime.now(timezone.utc).isoformat(),
-        "llm_score": None,      # populated in Step 2
-        "llm_notes": None,      # populated in Step 2
+        "llm_score": None,
+        "llm_notes": None,
+        "llm_match": None,
+        "llm_gaps": None,
+        "llm_provider": None,   ## Step 2 LLM: track which provider scored this job
         "status": "new",
     }
 
 
+## Step 2 LLM: scoring prompt — same prompt used for both OpenAI and Anthropic
+def build_prompt(role: str, company: str, location: str) -> str:
+    return f"""You are a job match evaluator.
+
+CV summary:
+{CV_TEXT}
+
+Job posting:
+Company: {company}
+Role: {role}
+Location: {location}
+
+Return JSON only, no preamble, no markdown:
+{{
+  "score": <0-100>,
+  "match": ["reason1", "reason2"],
+  "gaps": ["gap1", "gap2"],
+  "one_line": "plain English summary of fit"
+}}"""
+
+
+## Step 2 LLM: try OpenAI first, then Anthropic, return (score_dict, provider) or None
+def score_with_llm(role: str, company: str, location: str) -> tuple[dict, str] | None:
+
+    prompt = build_prompt(role, company, location)
+
+    ## Step 2 LLM: try OpenAI if key available
+    if OPENAI_API_KEY:
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "gpt-4o-mini",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 300,
+                    "temperature": 0,  
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = data["choices"][0]["message"]["content"].strip()
+            parsed = json.loads(text)
+
+            ## Step 2 LLM: approximate cost after we know parsing succeeded (usage from same response body)
+            usage = data.get("usage", {})
+            cost = (
+                usage.get("prompt_tokens", 0) / 1000 * OPENAI_COST_PER_1K_INPUT
+                + usage.get("completion_tokens", 0) / 1000 * OPENAI_COST_PER_1K_OUTPUT
+            )
+            cost_tracker["total"] += cost
+            cost_tracker["calls"] += 1
+
+            return parsed, "openai"
+        except Exception as e:
+            print(f"    [openai] scoring failed: {e} — trying Anthropic")
+
+    ## Step 2 LLM: fall back to Anthropic if key available
+    if ANTHROPIC_API_KEY:
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",  # fast + cheap for scoring
+                    "max_tokens": 300,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = data["content"][0]["text"].strip()
+            parsed = json.loads(text)
+
+            ## Step 2 LLM: approximate cost — Anthropic returns input_tokens / output_tokens
+            usage = data.get("usage", {})
+            cost = (
+                usage.get("input_tokens", 0) / 1000 * ANTHROPIC_COST_PER_1K_INPUT
+                + usage.get("output_tokens", 0) / 1000 * ANTHROPIC_COST_PER_1K_OUTPUT
+            )
+            cost_tracker["total"] += cost
+            cost_tracker["calls"] += 1
+
+            return parsed, "anthropic"
+        except Exception as e:
+            print(f"    [anthropic] scoring failed: {e}")
+
+    return None
+
+
 # --- INGEST ---
+# def ingest_company(company: str) -> tuple[int, int]:
+#     url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
+
+#     try:
+#         response = requests.get(url, timeout=10)
+#         response.raise_for_status()
+#     except requests.exceptions.HTTPError as e:
+#         print(f"  [{company}] HTTP error: {e}")
+#         return 0, 0
+#     except requests.exceptions.RequestException as e:
+#         print(f"  [{company}] Request failed: {e}")
+#         return 0, 0
+
+#     data = response.json()
+#     jobs = data.get("jobs", [])
+
+#     if not jobs:
+#         print(f"  [{company}] No jobs found (check board token)")
+#         return 0, 0
+
+# --- INGEST v2 ---
 def ingest_company(company: str) -> tuple[int, int]:
-    """
-    Fetch all jobs for one company, insert new ones, skip duplicates.
-    Returns (inserted, skipped).
-    """
     url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
 
     try:
@@ -103,14 +247,41 @@ def ingest_company(company: str) -> tuple[int, int]:
         print(f"  [{company}] No jobs found (check board token)")
         return 0, 0
 
+    ## Step 2 LLM: slice by JOB_LIMIT from .env (default 10). Use JOB_LIMIT=0 for every job returned by the API.
+    if JOB_LIMIT > 0:
+        jobs = jobs[:JOB_LIMIT]
+
+
+
+##########################################################
+
     inserted = 0
     skipped = 0
 
     for job in jobs:
         normalized = normalize_job(job, company)
+
+        ## Step 2 LLM: score the job before inserting
+        if OPENAI_API_KEY or ANTHROPIC_API_KEY:
+            result = score_with_llm(
+                normalized["role"],
+                normalized["company"],
+                normalized["location"],
+            )
+            if result:
+                scored, provider = result
+                normalized["llm_score"] = scored.get("score")
+                normalized["llm_notes"] = scored.get("one_line")
+                normalized["llm_match"] = scored.get("match")
+                normalized["llm_gaps"] = scored.get("gaps")
+                normalized["llm_provider"] = provider
+
         try:
             collection.insert_one(normalized)
             inserted += 1
+            ## Step 2 LLM: print score alongside insert confirmation
+            score_str = f"score={normalized['llm_score']}" if normalized["llm_score"] else "no score"
+            print(f"    + {normalized['role'][:50]} [{score_str}]")
         except errors.DuplicateKeyError:
             skipped += 1
 
@@ -119,15 +290,25 @@ def ingest_company(company: str) -> tuple[int, int]:
 
 # --- MAIN ---
 def main():
-    print(f"\nJobRadar — Greenhouse Ingest")
+    print(f"\nJobRadar — Greenhouse Ingest + LLM Scoring")
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Companies: {len(COMPANIES)}")
+
+    ## Step 2 LLM: confirm which provider will be used
+    if OPENAI_API_KEY:
+        print(f"LLM: OpenAI (primary)")
+    elif ANTHROPIC_API_KEY:
+        print(f"LLM: Anthropic (fallback)")
+    else:
+        print(f"LLM: none — scoring disabled")
+
     print("-" * 40)
 
     total_inserted = 0
     total_skipped = 0
 
     for company in COMPANIES:
+        print(f"\n  [{company}]")
         inserted, skipped = ingest_company(company)
         print(f"  [{company}] inserted: {inserted}, skipped: {skipped}")
         total_inserted += inserted
@@ -137,6 +318,14 @@ def main():
     print(f"Total inserted: {total_inserted}")
     print(f"Total skipped (duplicates): {total_skipped}")
     print(f"Total in DB: {collection.count_documents({})}")
+    
+    ## Step 2 LLM: print cost summary ##########################################
+    if cost_tracker["calls"] > 0:
+        print(f"LLM calls: {cost_tracker['calls']}")
+        print(f"LLM cost:  ${cost_tracker['total']:.5f}")
+        print(f"Cost/job:  ${cost_tracker['total']/cost_tracker['calls']:.5f}")
+
+    
     print(f"Done.\n")
 
 
