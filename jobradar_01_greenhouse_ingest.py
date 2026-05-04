@@ -12,7 +12,8 @@
 # Run API:
 #   uvicorn jobradar_01_greenhouse_ingest:app --reload
 #   then open http://127.0.0.1:8000/docs for Swagger UI
-#   login at http://127.0.0.1:8000/login
+#   login: http://127.0.0.1:8000/login
+#   logout: POST /logout (Swagger) or GET /logout?redirect=1 (browser → /me)
 
 import requests
 from datetime import datetime, timezone
@@ -348,10 +349,23 @@ async def login(request: Request):
 
 ##################################################
 
+def _whitelist_email_key(addr: str) -> str:
+    """Canonical form for whitelist matching: lower/strip; googlemail→gmail; Gmail ignores dots in local part."""
+    a = (addr or "").strip().lower()
+    if not a or "@" not in a:
+        return a
+    local, _, domain = a.rpartition("@")
+    if domain == "googlemail.com":
+        domain = "gmail.com"
+    if domain == "gmail.com":
+        return f"{local.replace('.', '')}@gmail.com"
+    return a
+
+
 ## Step 5 OAuth2: whitelist — only these emails allowed
-## Normalized: each entry is stripped + lowercased so env spacing/case and Google’s email casing don’t matter
+## Entries compared via _whitelist_email_key (gmail/googlemail + dot-insensitive local part)
 ALLOWED_EMAILS = {
-    e.strip().lower()
+    _whitelist_email_key(e)
     for e in os.getenv("ALLOWED_EMAILS", "").split(",")
     if e.strip()
 }
@@ -363,9 +377,9 @@ async def auth_callback(request: Request):
     if not user:
         raise HTTPException(status_code=400, detail="Failed to get user info from Google")
 
-    ## Step 5 OAuth2: check email whitelist (compare stripped lowercase; see ALLOWED_EMAILS above)
+    ## Step 5 OAuth2: check email whitelist (see _whitelist_email_key)
     email = (user.get("email") or "").strip()
-    if ALLOWED_EMAILS and email.lower() not in ALLOWED_EMAILS:
+    if ALLOWED_EMAILS and _whitelist_email_key(email) not in ALLOWED_EMAILS:
         raise HTTPException(status_code=403, detail=f"Access denied: {email} not authorized")
     
     request.session["user"] = {
@@ -400,11 +414,26 @@ def me(request: Request):
     return {"logged_in": True, "user": user}
 
 
-## Step 5 OAuth2: GET /logout — clear session
+## Step 5 OAuth2: logout — clears app session (not Google’s account; use incognito to switch Google users)
 @app.get("/logout")
-def logout(request: Request):
+def logout(
+    request: Request,
+    redirect: bool = Query(
+        False,
+        description="If true, 303 redirect to /me so the browser shows logged_in false",
+    ),
+):
     request.session.clear()
-    return {"message": "Logged out. Visit /login to authenticate again."}
+    if redirect:
+        return RedirectResponse(url="/me", status_code=303)
+    return {"message": "Logged out. Visit /login to authenticate again.", "login": "/login"}
+
+
+@app.post("/logout")
+def logout_post(request: Request):
+    """Same as GET /logout — handy for “Try it out” in /docs (session cookie must still be sent)."""
+    request.session.clear()
+    return {"message": "Logged out. Visit /login to authenticate again.", "login": "/login"}
 
 
 # --- API ROUTES ---
