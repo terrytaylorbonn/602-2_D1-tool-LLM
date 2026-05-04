@@ -346,21 +346,49 @@ async def login(request: Request):
     redirect_uri = request.url_for("auth_callback")
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
+##################################################
 
-## Step 5 OAuth2: GET /auth/callback — Google redirects here after login
-## exchanges auth code for token, fetches user info, stores in session
+## Step 5 OAuth2: whitelist — only these emails allowed
+## Normalized: each entry is stripped + lowercased so env spacing/case and Google’s email casing don’t matter
+ALLOWED_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv("ALLOWED_EMAILS", "").split(",")
+    if e.strip()
+}
+
 @app.get("/auth/callback")
 async def auth_callback(request: Request):
     token = await oauth.google.authorize_access_token(request)
     user  = token.get("userinfo")
     if not user:
         raise HTTPException(status_code=400, detail="Failed to get user info from Google")
+
+    ## Step 5 OAuth2: check email whitelist (compare stripped lowercase; see ALLOWED_EMAILS above)
+    email = (user.get("email") or "").strip()
+    if ALLOWED_EMAILS and email.lower() not in ALLOWED_EMAILS:
+        raise HTTPException(status_code=403, detail=f"Access denied: {email} not authorized")
+    
     request.session["user"] = {
-        "email": user.get("email"),
+        "email": email,
         "name":  user.get("name"),
         "picture": user.get("picture"),
     }
     return RedirectResponse(url="/me")
+
+## Step 5 OAuth2: GET /auth/callback — Google redirects here after login
+## exchanges auth code for token, fetches user info, stores in session
+# @app.get("/auth/callback")
+# async def auth_callback(request: Request):
+#     token = await oauth.google.authorize_access_token(request)
+#     user  = token.get("userinfo")
+#     if not user:
+#         raise HTTPException(status_code=400, detail="Failed to get user info from Google")
+#     request.session["user"] = {
+#         "email": user.get("email"),
+#         "name":  user.get("name"),
+#         "picture": user.get("picture"),
+#     }
+#     return RedirectResponse(url="/me")
 
 
 ## Step 5 OAuth2: GET /me — show current logged-in user (open route, good for testing)
