@@ -1,3 +1,6 @@
+authlib
+httpx
+itsdangerous
 fastapi==0.135.2
 openai==2.29.0
 uvicorn==0.42.0

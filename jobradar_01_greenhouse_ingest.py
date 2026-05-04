@@ -1,22 +1,28 @@
-# jobradar_01_greenhouse_ingest.py STEP3
+# jobradar_01_greenhouse_ingest.py STEP5
 
 # Step 1 of 6: Fetch jobs from Greenhouse public API → normalize → dedup → insert into MongoDB
 # Step 2 of 6: LLM scoring (OpenAI or Anthropic, whichever key is available)
 # Step 3 of 6: FastAPI routes to query jobs from MongoDB
+# Step 4 of 6: Render deploy
+# Step 5 of 6: OAuth2 security (Google login)
 # Run ingest:
 #   .venv\Scripts\activate
 #   python -m pip install -r requirements.txt
 #   python jobradar_01_greenhouse_ingest.py
-# Run API:                                                        ## Step 3 FastAPI: new run command
+# Run API:
 #   uvicorn jobradar_01_greenhouse_ingest:app --reload
 #   then open http://127.0.0.1:8000/docs for Swagger UI
+#   login at http://127.0.0.1:8000/login
 
 import requests
 from datetime import datetime, timezone
 from pymongo import MongoClient, errors
 from dotenv import load_dotenv
-from bson import ObjectId                                         ## Step 3 FastAPI: new import
-from fastapi import FastAPI, Query, HTTPException                 ## Step 3 FastAPI: new import
+from bson import ObjectId
+from fastapi import FastAPI, Query, HTTPException, Depends, Request  ## Step 5 OAuth2: added Request, Depends
+from fastapi.responses import RedirectResponse                        ## Step 5 OAuth2: new import
+from authlib.integrations.starlette_client import OAuth               ## Step 5 OAuth2: new import
+from starlette.middleware.sessions import SessionMiddleware            ## Step 5 OAuth2: new import
 import os
 import json
 
@@ -33,8 +39,15 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ## Default 10 jobs/board if JOB_LIMIT unset (safe for dev). Set JOB_LIMIT=0 for no cap (full ingest).
 JOB_LIMIT = max(0, int(os.getenv("JOB_LIMIT", "10")))
 
+## Step 5 OAuth2: load Google credentials and session secret
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+SECRET_KEY           = os.getenv("SECRET_KEY", "change-me-in-production")
+
 if not MONGO_URI:
     raise ValueError("MONGO_URI not found in .env")
+if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:          ## Step 5 OAuth2: warn if missing
+    print("WARNING: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET not set. Auth will fail.")
 
 ## Step 2 LLM: warn if no LLM key found — scoring will be skipped
 if not OPENAI_API_KEY and not ANTHROPIC_API_KEY:
@@ -77,7 +90,21 @@ collection = db[COLLECTION]
 collection.create_index("job_id", unique=True)
 
 ## Step 3 FastAPI: app instance
-app = FastAPI(title="JobRadar API", version="0.3")
+app = FastAPI(title="JobRadar API", version="0.5")
+
+## Step 5 OAuth2: session middleware — required for Google OAuth flow
+## SECRET_KEY signs the session cookie — keep it secret in production
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+
+## Step 5 OAuth2: register Google as OAuth provider
+oauth = OAuth()
+oauth.register(
+    name="google",
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
 
 
 # --- NORMALIZE ---
@@ -299,7 +326,62 @@ def fix_id(doc: dict) -> dict:
     return doc
 
 
-## Step 3 FastAPI: GET /health — liveness check
+## Step 5 OAuth2: dependency — call this on any protected route
+## Checks session for logged-in user, raises 401 if not found
+def require_auth(request: Request) -> dict:
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated. Please login at /login"
+        )
+    return user
+
+
+# --- AUTH ROUTES ---
+
+## Step 5 OAuth2: GET /login — redirect user to Google login page
+@app.get("/login")
+async def login(request: Request):
+    redirect_uri = request.url_for("auth_callback")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+## Step 5 OAuth2: GET /auth/callback — Google redirects here after login
+## exchanges auth code for token, fetches user info, stores in session
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    token = await oauth.google.authorize_access_token(request)
+    user  = token.get("userinfo")
+    if not user:
+        raise HTTPException(status_code=400, detail="Failed to get user info from Google")
+    request.session["user"] = {
+        "email": user.get("email"),
+        "name":  user.get("name"),
+        "picture": user.get("picture"),
+    }
+    return RedirectResponse(url="/me")
+
+
+## Step 5 OAuth2: GET /me — show current logged-in user (open route, good for testing)
+@app.get("/me")
+def me(request: Request):
+    user = request.session.get("user")
+    if not user:
+        return {"logged_in": False, "message": "Visit /login to authenticate"}
+    return {"logged_in": True, "user": user}
+
+
+## Step 5 OAuth2: GET /logout — clear session
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"message": "Logged out. Visit /login to authenticate again."}
+
+
+# --- API ROUTES ---
+
+## Step 3 FastAPI: GET /health — liveness check (open, no auth required)
 @app.get("/health")
 def health():
     return {
@@ -310,8 +392,10 @@ def health():
 
 
 ## Step 3 FastAPI: GET /jobs — list jobs with filters
+## Step 5 OAuth2: protected — requires Google login
 @app.get("/jobs")
 def list_jobs(
+    request: Request,
     min_score: int  = Query(0,    description="Minimum LLM score"),
     max_score: int  = Query(100,  description="Maximum LLM score"),
     company:   str  = Query(None, description="Filter by company"),
@@ -320,6 +404,7 @@ def list_jobs(
     source:    str  = Query(None, description="greenhouse | remotive | gmail"),
     limit:     int  = Query(50,   description="Max results"),
     skip:      int  = Query(0,    description="Pagination offset"),
+    user:      dict = Depends(require_auth),                         ## Step 5 OAuth2: protected
 ):
     query = {
         "llm_score": {"$gte": min_score, "$lte": max_score}
@@ -334,8 +419,9 @@ def list_jobs(
 
 
 ## Step 3 FastAPI: GET /jobs/{id} — single job by MongoDB _id
+## Step 5 OAuth2: protected
 @app.get("/jobs/{id}")
-def get_job(id: str):
+def get_job(id: str, user: dict = Depends(require_auth)):            ## Step 5 OAuth2: protected
     try:
         doc = collection.find_one({"_id": ObjectId(id)})
     except Exception:
@@ -346,8 +432,13 @@ def get_job(id: str):
 
 
 ## Step 3 FastAPI: PUT /jobs/{id}/status — update job status
+## Step 5 OAuth2: protected
 @app.put("/jobs/{id}/status")
-def update_status(id: str, status: str = Query(..., description="new | reviewed | applied | rejected")):
+def update_status(
+    id: str,
+    status: str = Query(..., description="new | reviewed | applied | rejected"),
+    user: dict = Depends(require_auth),                              ## Step 5 OAuth2: protected
+):
     valid = {"new", "reviewed", "applied", "rejected"}
     if status not in valid:
         raise HTTPException(status_code=400, detail=f"Status must be one of {valid}")
@@ -364,8 +455,9 @@ def update_status(id: str, status: str = Query(..., description="new | reviewed 
 
 
 ## Step 3 FastAPI: GET /summary — score distribution and counts
+## Step 5 OAuth2: protected
 @app.get("/summary")
-def summary():
+def summary(user: dict = Depends(require_auth)):                     ## Step 5 OAuth2: protected
     total = collection.count_documents({})
     scored = collection.count_documents({"llm_score": {"$ne": None}})
     pipeline = [
