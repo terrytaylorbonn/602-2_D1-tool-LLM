@@ -5,6 +5,7 @@
 # Step 4:    Render (uvicorn jobradar_unified:app)
 # Step 5:    Google OAuth for /jobs etc.
 # Step 6:    Gmail IMAP → LinkedIn job-alert emails → same MongoDB collection
+# Step 7:    Digest email (preview + send)
 #
 # CLI (ingest only):
 #   python jobradar_unified.py
@@ -19,10 +20,12 @@ import email
 import re
 import json
 import os
+import smtplib
 import requests
 from datetime import datetime, timezone, timedelta
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
+from email.message import EmailMessage
 
 from bson import ObjectId
 from dotenv import load_dotenv
@@ -35,13 +38,25 @@ from starlette.middleware.sessions import SessionMiddleware
 # --- CONFIG ---
 load_dotenv()
 
+# ## S7 helper: parse int envs safely (blank/invalid -> default)
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name, str(default)) or "").strip()
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"WARNING: {name}='{raw}' is not an int. Using default {default}.")
+        return default
+
+
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "jobradar")
 COLLECTION = os.getenv("COLLECTION", "jobs")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-JOB_LIMIT = max(0, int(os.getenv("JOB_LIMIT", "10")))
+JOB_LIMIT = max(0, _env_int("JOB_LIMIT", 10))
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
@@ -52,8 +67,19 @@ GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = (os.getenv("GMAIL_APP_PASSWORD") or "").replace(" ", "")
 GMAIL_LABEL = os.getenv("GMAIL_LABEL", "job-alerts")
 IMAP_SERVER = "imap.gmail.com"
-DELETE_AFTER_DAYS = max(0, int(os.getenv("DELETE_AFTER_DAYS", "90")))
-GMAIL_MAX_EMAILS = max(0, int(os.getenv("GMAIL_MAX_EMAILS", "2")))
+DELETE_AFTER_DAYS = max(0, _env_int("DELETE_AFTER_DAYS", 90))
+GMAIL_MAX_EMAILS = max(0, _env_int("GMAIL_MAX_EMAILS", 2))
+
+# ## S7 config: digest email settings
+DIGEST_EMAIL_TO = os.getenv("DIGEST_EMAIL_TO")
+DIGEST_EMAIL_FROM = os.getenv("DIGEST_EMAIL_FROM") or GMAIL_ADDRESS
+DIGEST_EMAIL_APP_PASSWORD = (
+    (os.getenv("DIGEST_EMAIL_APP_PASSWORD") or GMAIL_APP_PASSWORD or "").replace(" ", "")
+)
+DIGEST_SMTP_HOST = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
+DIGEST_SMTP_PORT = max(1, _env_int("DIGEST_SMTP_PORT", 587))
+DIGEST_MAX_JOBS = max(1, _env_int("DIGEST_MAX_JOBS", 15))
+DIGEST_MIN_SCORE = max(0, _env_int("DIGEST_MIN_SCORE", 0))
 
 COMPANIES = [
     "anthropic",
@@ -372,6 +398,42 @@ def cleanup_old_jobs(days: int) -> int:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     result = collection.delete_many({"seen_date": {"$lt": cutoff}})
     return result.deleted_count
+
+
+# ## S7 helper: render digest body lines from job docs
+def build_digest_lines(jobs: list[dict]) -> str:
+    lines = []
+    for idx, job in enumerate(jobs, 1):
+        score = job.get("llm_score")
+        score_str = "n/a" if score is None else str(score)
+        lines.extend(
+            [
+                f"{idx}. {job.get('role', 'Unknown role')}",
+                f"   Company: {job.get('company', 'Unknown')}",
+                f"   Location: {job.get('location', 'Unknown')} | Score: {score_str} | Source: {job.get('source', 'n/a')}",
+                f"   URL: {job.get('url', '')}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
+# ## S7 helper: SMTP send for digest emails
+def send_digest_email(to_addr: str, subject: str, body: str) -> None:
+    if not DIGEST_EMAIL_FROM or not DIGEST_EMAIL_APP_PASSWORD:
+        raise RuntimeError(
+            "Missing digest sender config. Set DIGEST_EMAIL_FROM and DIGEST_EMAIL_APP_PASSWORD."
+        )
+    msg = EmailMessage()
+    msg["From"] = DIGEST_EMAIL_FROM
+    msg["To"] = to_addr
+    msg["Subject"] = subject
+    msg.set_content(body)
+
+    with smtplib.SMTP(DIGEST_SMTP_HOST, DIGEST_SMTP_PORT, timeout=20) as server:
+        server.starttls()
+        server.login(DIGEST_EMAIL_FROM, DIGEST_EMAIL_APP_PASSWORD)
+        server.send_message(msg)
 
 
 def ingest_gmail() -> tuple[int, int, int]:
@@ -706,6 +768,83 @@ def summary(user: dict = Depends(require_auth)):
             for c in COMPANIES
         },
         "score_stats": stats,
+    }
+
+
+@app.post("/digest/send")
+def send_digest(
+    limit: int = Query(DIGEST_MAX_JOBS, ge=1, le=100),
+    min_score: int = Query(DIGEST_MIN_SCORE, ge=0, le=100),
+    only_new: bool = Query(True, description="If true, include only jobs with status='new'"),
+    mark_sent: bool = Query(True, description="If true, set digest_sent_at on included jobs"),
+    user: dict = Depends(require_auth),
+):
+    to_addr = (DIGEST_EMAIL_TO or user.get("email") or "").strip()
+    if not to_addr:
+        raise HTTPException(status_code=400, detail="No recipient found. Set DIGEST_EMAIL_TO.")
+
+    query: dict = {"llm_score": {"$gte": min_score}}
+    if only_new:
+        query["status"] = "new"
+
+    jobs = list(collection.find(query).sort("llm_score", -1).limit(limit))
+    if not jobs:
+        return {"sent": False, "reason": "No matching jobs for digest.", "count": 0}
+
+    digest_body = (
+        f"JobRadar Daily Digest\n"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Filters: min_score>={min_score}, only_new={only_new}\n"
+        f"Count: {len(jobs)}\n\n"
+        f"{build_digest_lines(jobs)}\n"
+    )
+    subject = f"JobRadar Digest — {len(jobs)} jobs"
+
+    try:
+        send_digest_email(to_addr=to_addr, subject=subject, body=digest_body)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Digest send failed: {e}")
+
+    if mark_sent:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        ids = [job["_id"] for job in jobs]
+        collection.update_many({"_id": {"$in": ids}}, {"$set": {"digest_sent_at": now_iso}})
+
+    return {
+        "sent": True,
+        "to": to_addr,
+        "count": len(jobs),
+        "subject": subject,
+    }
+
+
+# ## S7 route: preview digest content without sending email
+@app.get("/digest/preview")
+def preview_digest(
+    limit: int = Query(DIGEST_MAX_JOBS, ge=1, le=100),
+    min_score: int = Query(DIGEST_MIN_SCORE, ge=0, le=100),
+    only_new: bool = Query(True, description="If true, include only jobs with status='new'"),
+    user: dict = Depends(require_auth),
+):
+    query: dict = {"llm_score": {"$gte": min_score}}
+    if only_new:
+        query["status"] = "new"
+
+    jobs = list(collection.find(query).sort("llm_score", -1).limit(limit))
+    if not jobs:
+        return {"count": 0, "preview": "No matching jobs for digest.", "filters": {"limit": limit, "min_score": min_score, "only_new": only_new}}
+
+    preview_text = (
+        f"JobRadar Daily Digest (Preview)\n"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Filters: min_score>={min_score}, only_new={only_new}\n"
+        f"Count: {len(jobs)}\n\n"
+        f"{build_digest_lines(jobs)}\n"
+    )
+    return {
+        "count": len(jobs),
+        "filters": {"limit": limit, "min_score": min_score, "only_new": only_new},
+        "preview": preview_text,
     }
 
 
