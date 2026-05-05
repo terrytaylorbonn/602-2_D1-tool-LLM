@@ -8,7 +8,7 @@ services:
     name: jobradar
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn jobradar_01_greenhouse_ingest:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn jobradar_unified:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: MONGO_URI
         sync: false
@@ -22,3 +22,22 @@ services:
         sync: false
       - key: JOB_LIMIT
         value: "10"
+      - key: SECRET_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: ALLOWED_EMAILS
+        sync: false
+      # Optional — Gmail IMAP only needed if you run ingest that uses mail (CLI/cron elsewhere)
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: GMAIL_LABEL
+        sync: false
+      - key: DELETE_AFTER_DAYS
+        sync: false
+      - key: GMAIL_MAX_EMAILS
+        sync: false
