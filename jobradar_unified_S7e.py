@@ -8,6 +8,8 @@
 # Step 7:    Digest email (preview + send)
 # Step 7e:   Added Resend transport option. Resend requires a verified domain for "from"
 #            (not @gmail.com / @googlemail.com — add your own domain in Resend). Marked "## S7e".
+# Step 7f:   Daily digest as a new Google Doc in Drive (OAuth + Docs/Drive scopes). Marked "## S7f".
+#            Enable Google Drive API + Google Docs API on the GCP project for GOOGLE_CLIENT_*; POST /digest/google-doc.
 #
 # CLI (ingest only):
 #   python jobradar_unified.py
