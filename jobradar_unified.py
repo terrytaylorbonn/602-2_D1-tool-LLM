@@ -6,6 +6,7 @@
 # Step 5:    Google OAuth for /jobs etc.
 # Step 6:    Gmail IMAP → LinkedIn job-alert emails → same MongoDB collection
 # Step 7:    Digest email (preview + send)
+# Step 7e:   Added Resend transport option. Changed code marked with comments like "## S7e ..."
 #
 # CLI (ingest only):
 #   python jobradar_unified.py
@@ -76,6 +77,10 @@ DIGEST_EMAIL_FROM = os.getenv("DIGEST_EMAIL_FROM") or GMAIL_ADDRESS
 DIGEST_EMAIL_APP_PASSWORD = (
     (os.getenv("DIGEST_EMAIL_APP_PASSWORD") or GMAIL_APP_PASSWORD or "").replace(" ", "")
 )
+# ## S7e Resend config: choose sender transport and HTTP API settings
+DIGEST_SENDER = (os.getenv("DIGEST_SENDER", "smtp") or "smtp").strip().lower()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+RESEND_API_URL = os.getenv("RESEND_API_URL", "https://api.resend.com/emails")
 DIGEST_SMTP_HOST = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
 DIGEST_SMTP_PORT = max(1, _env_int("DIGEST_SMTP_PORT", 587))
 DIGEST_MAX_JOBS = max(1, _env_int("DIGEST_MAX_JOBS", 15))
@@ -418,12 +423,45 @@ def build_digest_lines(jobs: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-# ## S7 helper: SMTP send for digest emails
+# ## S7 helper: digest email sender (SMTP by default)
 def send_digest_email(to_addr: str, subject: str, body: str) -> None:
-    if not DIGEST_EMAIL_FROM or not DIGEST_EMAIL_APP_PASSWORD:
-        raise RuntimeError(
-            "Missing digest sender config. Set DIGEST_EMAIL_FROM and DIGEST_EMAIL_APP_PASSWORD."
+    # ## S7e Resend switch: allow SMTP (local) or Resend HTTPS (Render-friendly)
+    sender = DIGEST_SENDER
+    if sender not in {"smtp", "resend"}:
+        raise RuntimeError("DIGEST_SENDER must be 'smtp' or 'resend'.")
+
+    if not DIGEST_EMAIL_FROM:
+        raise RuntimeError("Missing digest sender config. Set DIGEST_EMAIL_FROM.")
+
+    # ## S7e Resend send path
+    if sender == "resend":
+        if not RESEND_API_KEY:
+            raise RuntimeError(
+                "Missing Resend config. Set RESEND_API_KEY (or use DIGEST_SENDER=smtp)."
+            )
+        response = requests.post(
+            RESEND_API_URL,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": DIGEST_EMAIL_FROM,
+                "to": [to_addr],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=20,
         )
+        response.raise_for_status()
+        return
+
+    if not DIGEST_EMAIL_APP_PASSWORD:
+        raise RuntimeError(
+            "Missing SMTP digest sender config. Set DIGEST_EMAIL_APP_PASSWORD "
+            "(or use DIGEST_SENDER=resend)."
+        )
+
     msg = EmailMessage()
     msg["From"] = DIGEST_EMAIL_FROM
     msg["To"] = to_addr

@@ -41,3 +41,14 @@ services:
         sync: false
       - key: GMAIL_MAX_EMAILS
         sync: false
+      # Digest sender transport: smtp (local) or resend (Render-friendly HTTPS)
+      - key: DIGEST_SENDER
+        value: "smtp"
+      - key: DIGEST_EMAIL_TO
+        sync: false
+      - key: DIGEST_EMAIL_FROM
+        sync: false
+      - key: DIGEST_EMAIL_APP_PASSWORD
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
