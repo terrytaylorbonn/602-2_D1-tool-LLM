@@ -8,7 +8,6 @@
 # Step 7:    Digest email (preview + send)
 # Step 7e:   Added Resend transport option. Resend requires a verified domain for "from"
 #            (not @gmail.com / @googlemail.com — add your own domain in Resend). Marked "## S7e".
-# Step 7f:   Daily digest as a new Google Doc in Drive (OAuth + Docs/Drive scopes). "## S7f".
 #
 # CLI (ingest only):
 #   python jobradar_unified.py
@@ -17,7 +16,6 @@
 # API server:
 #   uvicorn jobradar_unified:app --host 0.0.0.0 --port 8000
 #   Docs: http://127.0.0.1:8000/docs
-# S7f: Enable "Google Drive API" + "Google Docs API" on the same GCP project as GOOGLE_CLIENT_*.
 
 import imaplib
 import email
@@ -88,9 +86,6 @@ DIGEST_SMTP_HOST = os.getenv("DIGEST_SMTP_HOST", "smtp.gmail.com")
 DIGEST_SMTP_PORT = max(1, _env_int("DIGEST_SMTP_PORT", 587))
 DIGEST_MAX_JOBS = max(1, _env_int("DIGEST_MAX_JOBS", 15))
 DIGEST_MIN_SCORE = max(0, _env_int("DIGEST_MIN_SCORE", 0))
-# ## S7f Google Docs output: optional Drive folder ID (Docs created there; else My Drive root)
-DIGEST_DRIVE_FOLDER_ID = (os.getenv("DIGEST_DRIVE_FOLDER_ID") or "").strip() or None
-DIGEST_GOOGLE_DOC_TITLE_PREFIX = (os.getenv("DIGEST_GOOGLE_DOC_TITLE_PREFIX") or "JobRadar digest").strip() or "JobRadar digest"
 
 COMPANIES = [
     "anthropic",
@@ -127,23 +122,13 @@ collection.create_index("job_id", unique=True)
 app = FastAPI(title="JobRadar API", version="0.6-unified")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
-# ## S7f OAuth scope: Drive + Docs so we can create timestamped digest documents.
-_GOOGLE_OAUTH_SCOPES = (
-    "openid email profile "
-    "https://www.googleapis.com/auth/documents "
-    "https://www.googleapis.com/auth/drive.file"
-)
-
 oauth = OAuth()
 oauth.register(
     name="google",
     client_id=GOOGLE_CLIENT_ID,
     client_secret=GOOGLE_CLIENT_SECRET,
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-    client_kwargs={
-        "scope": _GOOGLE_OAUTH_SCOPES,
-        "access_type": "offline",
-    },
+    client_kwargs={"scope": "openid email profile"},
 )
 
 
@@ -439,24 +424,6 @@ def build_digest_lines(jobs: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-def _digest_query_jobs(limit: int, min_score: int, only_new: bool) -> list[dict]:
-    query: dict = {"llm_score": {"$gte": min_score}}
-    if only_new:
-        query["status"] = "new"
-    return list(collection.find(query).sort("llm_score", -1).limit(limit))
-
-
-def _digest_format_body(jobs: list[dict], min_score: int, only_new: bool, headline: str) -> str:
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return (
-        f"{headline}\n"
-        f"Generated: {ts}\n"
-        f"Filters: min_score>={min_score}, only_new={only_new}\n"
-        f"Count: {len(jobs)}\n\n"
-        f"{build_digest_lines(jobs)}\n"
-    )
-
-
 def _digest_email_from_is_plausible(addr: str) -> bool:
     """Catch truncated .env values like name@ with no domain (dotenv / # comment issues)."""
     a = (addr or "").strip()
@@ -525,61 +492,6 @@ def send_digest_email(to_addr: str, subject: str, body: str) -> None:
         server.starttls()
         server.login(from_addr, DIGEST_EMAIL_APP_PASSWORD)
         server.send_message(msg)
-
-
-# ## S7f Google Drive + Docs: create a new Doc with plain-text body (timestamp in title comes from caller).
-def create_digest_google_doc_s7f(access_token: str, title: str, plain_body: str) -> dict[str, str | None]:
-    metadata: dict = {
-        "name": title,
-        "mimeType": "application/vnd.google-apps.document",
-    }
-    if DIGEST_DRIVE_FOLDER_ID:
-        metadata["parents"] = [DIGEST_DRIVE_FOLDER_ID]
-
-    drive_resp = requests.post(
-        "https://www.googleapis.com/drive/v3/files",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        params={"fields": "id,webViewLink"},
-        json=metadata,
-        timeout=30,
-    )
-    if not drive_resp.ok:
-        raise RuntimeError(
-            f"Drive files.create failed ({drive_resp.status_code}): {drive_resp.text[:800]}"
-        )
-    file_doc = drive_resp.json()
-    doc_id = file_doc.get("id")
-    web_link = file_doc.get("webViewLink")
-    if not doc_id:
-        raise RuntimeError("Drive files.create returned no document id.")
-
-    # ## S7f Docs API: empty doc body — insert at index 1 (first paragraph start).
-    docs_resp = requests.post(
-        f"https://docs.googleapis.com/v1/documents/{doc_id}:batchUpdate",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "requests": [
-                {
-                    "insertText": {
-                        "location": {"index": 1},
-                        "text": plain_body,
-                    }
-                }
-            ],
-        },
-        timeout=60,
-    )
-    if not docs_resp.ok:
-        raise RuntimeError(
-            f"Docs batchUpdate failed ({docs_resp.status_code}): {docs_resp.text[:800]}"
-        )
-    return {"document_id": doc_id, "title": title, "web_view_link": web_link}
 
 
 def ingest_gmail() -> tuple[int, int, int]:
@@ -744,17 +656,6 @@ def require_auth(request: Request) -> dict:
     return user
 
 
-# ## S7f Depends: Google API access token saved at login (after consent for Drive + Docs scopes).
-def require_google_drive_access_token(request: Request, user: dict = Depends(require_auth)) -> str:
-    tok = request.session.get("google_oauth_access_token")
-    if not tok:
-        raise HTTPException(
-            status_code=400,
-            detail="Missing Google API token. Sign out, then sign in again at /login so Drive/Docs scopes are granted.",
-        )
-    return tok
-
-
 def _whitelist_email_key(addr: str) -> str:
     a = (addr or "").strip().lower()
     if not a or "@" not in a:
@@ -796,10 +697,6 @@ async def auth_callback(request: Request):
         "name": user.get("name"),
         "picture": user.get("picture"),
     }
-    # ## S7f Store access token for Google Docs/Drive API calls (same login as /jobs).
-    access = token.get("access_token")
-    if access:
-        request.session["google_oauth_access_token"] = access
     return RedirectResponse(url="/me")
 
 
@@ -944,11 +841,21 @@ def send_digest(
     if not to_addr:
         raise HTTPException(status_code=400, detail="No recipient found. Set DIGEST_EMAIL_TO.")
 
-    jobs = _digest_query_jobs(limit, min_score, only_new)
+    query: dict = {"llm_score": {"$gte": min_score}}
+    if only_new:
+        query["status"] = "new"
+
+    jobs = list(collection.find(query).sort("llm_score", -1).limit(limit))
     if not jobs:
         return {"sent": False, "reason": "No matching jobs for digest.", "count": 0}
 
-    digest_body = _digest_format_body(jobs, min_score, only_new, "JobRadar Daily Digest")
+    digest_body = (
+        f"JobRadar Daily Digest\n"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Filters: min_score>={min_score}, only_new={only_new}\n"
+        f"Count: {len(jobs)}\n\n"
+        f"{build_digest_lines(jobs)}\n"
+    )
     subject = f"JobRadar Digest — {len(jobs)} jobs"
 
     try:
@@ -977,55 +884,25 @@ def preview_digest(
     only_new: bool = Query(True, description="If true, include only jobs with status='new'"),
     user: dict = Depends(require_auth),
 ):
-    jobs = _digest_query_jobs(limit, min_score, only_new)
+    query: dict = {"llm_score": {"$gte": min_score}}
+    if only_new:
+        query["status"] = "new"
+
+    jobs = list(collection.find(query).sort("llm_score", -1).limit(limit))
     if not jobs:
         return {"count": 0, "preview": "No matching jobs for digest.", "filters": {"limit": limit, "min_score": min_score, "only_new": only_new}}
 
-    preview_text = _digest_format_body(jobs, min_score, only_new, "JobRadar Daily Digest (Preview)")
+    preview_text = (
+        f"JobRadar Daily Digest (Preview)\n"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"Filters: min_score>={min_score}, only_new={only_new}\n"
+        f"Count: {len(jobs)}\n\n"
+        f"{build_digest_lines(jobs)}\n"
+    )
     return {
         "count": len(jobs),
         "filters": {"limit": limit, "min_score": min_score, "only_new": only_new},
         "preview": preview_text,
-    }
-
-
-# ## S7f route: create a new timestamped Google Doc in Drive with this digest (no email send).
-@app.post("/digest/google-doc")
-def digest_google_doc(
-    limit: int = Query(DIGEST_MAX_JOBS, ge=1, le=100),
-    min_score: int = Query(DIGEST_MIN_SCORE, ge=0, le=100),
-    only_new: bool = Query(True, description="If true, include only jobs with status='new'"),
-    mark_sent: bool = Query(True, description="If true, set digest_sent_at on included jobs"),
-    access_token: str = Depends(require_google_drive_access_token),
-):
-    jobs = _digest_query_jobs(limit, min_score, only_new)
-    if not jobs:
-        return {
-            "created": False,
-            "reason": "No matching jobs for digest.",
-            "count": 0,
-        }
-
-    body_plain = _digest_format_body(jobs, min_score, only_new, "JobRadar Daily Digest (Google Doc)")
-    stamp = datetime.now().strftime("%Y-%m-%d %H-%M-%S")
-    title = f"{DIGEST_GOOGLE_DOC_TITLE_PREFIX} — {stamp}"
-
-    try:
-        doc_info = create_digest_google_doc_s7f(access_token, title, body_plain)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"S7f Google Doc create failed: {e}")
-
-    if mark_sent:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        ids = [job["_id"] for job in jobs]
-        collection.update_many({"_id": {"$in": ids}}, {"$set": {"digest_sent_at": now_iso}})
-
-    return {
-        "created": True,
-        "count": len(jobs),
-        "title": doc_info.get("title"),
-        "document_id": doc_info.get("document_id"),
-        "web_view_link": doc_info.get("web_view_link"),
     }
 
 

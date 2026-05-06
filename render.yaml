@@ -52,3 +52,8 @@ services:
         sync: false
       - key: RESEND_API_KEY
         sync: false
+      # S7f optional: Drive folder for new digest Docs; title prefix for doc names
+      - key: DIGEST_DRIVE_FOLDER_ID
+        sync: false
+      - key: DIGEST_GOOGLE_DOC_TITLE_PREFIX
+        sync: false
