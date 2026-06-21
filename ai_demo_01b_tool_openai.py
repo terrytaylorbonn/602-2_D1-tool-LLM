@@ -41,7 +41,8 @@ def calculator(operation, a, b):
 # Prompt
 # -----------------------------------
 
-user_prompt = "What is 11 multiplied by 6?"
+user_prompt = "What is 5 plus 3?"
+# user_prompt = "What is 11 multiplied by 6?"
 
 system_prompt = """
 You are an AI agent.

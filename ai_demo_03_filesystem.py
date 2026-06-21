@@ -51,20 +51,20 @@ def read_file(filename):
 # Prompt
 # -----------------------------------
 
-user_prompt = "Read the Taipei shipment file."
+# user_prompt = "Read the Taipei shipment file."
+#user_prompt = "I need info about suppliers."
+#user_prompt = "read info about suppliers."
+user_prompt = "how many suppliers had problems (read info)."
+
 
 system_prompt = """
 You are an AI agent.
-
 Return ONLY JSON.
-
 You may use this tool:
-
 {
   "tool": "read_file",
   "filename": "taipei_shipments.txt"
 }
-
 Allowed filenames:
 - taipei_shipments.txt
 - supplier_notes.txt
